@@ -1,3 +1,4 @@
+//credit for featurs to @realvare 
 process.env['NODE_TLS_REJECT_UNAUTHORIZED'] = '1';
 import './config.js';
 import { createRequire } from 'module';
