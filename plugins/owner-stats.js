@@ -1,5 +1,5 @@
 let handler = async (m, { conn }) => {
-  const queueStats = await import('../../lib/queue.js').then(mod => {
+  const queueStats = await import('../lib/queue.js').then(mod => {
     return {
       messages: {
         pending: mod.messageQueue.pending,
