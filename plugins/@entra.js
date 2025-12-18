@@ -28,13 +28,13 @@ async function before(m, { conn }) {
             return m.reply(
                 '『 ❌ 』 *Errore nell\'ottenere informazioni sul gruppo*\n\n' +
                 '💡 Possibili cause:\n' +
+                 '• Mi avete rimosso > contattare owner!'
                 '• Link scaduto o revocato\n' +
                 '• Link non valido\n' +
-                '• Mi avete rimosso > contattare owner'
             );
         }
 
-        const MIN_MEMBERS = 50;
+        const MIN_MEMBERS = 35;
 
         if (groupInfo.size < MIN_MEMBERS) {
             return m.reply(
