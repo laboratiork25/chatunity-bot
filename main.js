@@ -379,7 +379,6 @@ if (!fs.existsSync(`./${global.authFile}/creds.json`)) {
         rl.close();
       }
       setTimeout(async () => {
-        const randomCode = generateRandomCode();
         let codeBot = await global.conn.requestPairingCode(addNumber);
         codeBot = codeBot?.match(/.{1,4}/g)?.join("-") || codeBot;
         console.log(chalk.bold.white(chalk.bgBlueBright('꒰🩸꒱ ◦•≫ CODICE DI COLLEGAMENTO:')), chalk.bold.white(chalk.white(codeBot)));
@@ -497,7 +496,7 @@ async function connectionUpdate(update) {
   }
 }
 
-// DEFINIZIONE DI reloadHandler DOPO connectionUpdate
+// DEFINIZIONE DI reloadHandler DOPO connectionUpdate CON CONTROLLI DI SICUREZZA
 global.reloadHandler = async function (restatConn) {
   try {
     const Handler = await import(`./handler.js?update=${Date.now()}`).catch(console.error);
@@ -520,13 +519,28 @@ global.reloadHandler = async function (restatConn) {
   }
   
   if (global.conn && !global.conn.isInit && global.handler) {
-    global.conn.ev.off('messages.upsert', global.conn.handler);
-    global.conn.ev.off('group-participants.update', global.conn.participantsUpdate);
-    global.conn.ev.off('groups.update', global.conn.groupsUpdate);
-    global.conn.ev.off('message.delete', global.conn.onDelete);
-    global.conn.ev.off('call', global.conn.onCall);
-    global.conn.ev.off('connection.update', global.conn.connectionUpdate);
-    global.conn.ev.off('creds.update', global.conn.credsUpdate);
+    // CONTROLLI DI SICUREZZA: rimuovi solo se esistono
+    if (typeof global.conn.handler === 'function') {
+      global.conn.ev.off('messages.upsert', global.conn.handler);
+    }
+    if (typeof global.conn.participantsUpdate === 'function') {
+      global.conn.ev.off('group-participants.update', global.conn.participantsUpdate);
+    }
+    if (typeof global.conn.groupsUpdate === 'function') {
+      global.conn.ev.off('groups.update', global.conn.groupsUpdate);
+    }
+    if (typeof global.conn.onDelete === 'function') {
+      global.conn.ev.off('message.delete', global.conn.onDelete);
+    }
+    if (typeof global.conn.onCall === 'function') {
+      global.conn.ev.off('call', global.conn.onCall);
+    }
+    if (typeof global.conn.connectionUpdate === 'function') {
+      global.conn.ev.off('connection.update', global.conn.connectionUpdate);
+    }
+    if (typeof global.conn.credsUpdate === 'function') {
+      global.conn.ev.off('creds.update', global.conn.credsUpdate);
+    }
 
     global.conn.welcome = '@user benvenuto/a in @subject';
     global.conn.bye = '@user ha abbandonato il gruppo';
