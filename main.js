@@ -22,18 +22,21 @@ const sessionFolder = path.join(process.cwd(), 'sessioni');
 const tempDir = join(process.cwd(), 'temp');
 const tmpDir = join(process.cwd(), 'tmp');
 
-if (!existsSync(tempDir)) {
-  mkdirSync(tempDir, { recursive: true });
-}
-if (!existsSync(tmpDir)) {
-  mkdirSync(tmpDir, { recursive: true });
-}
+if (!existsSync(tempDir)) mkdirSync(tempDir, { recursive: true });
+if (!existsSync(tmpDir)) mkdirSync(tmpDir, { recursive: true });
 
 let stopped = 'open';
 global.isLogoPrinted = false;
 global.qrGenerated = false;
 global.connectionMessagesPrinted = {};
 global.conns = [];
+global.handler = null; // ✅ IMPORTANTE: Inizializzato qui
+
+// Timer
+setInterval(async () => {
+  if (stopped === 'close' || !global.conn?.user) return;
+  clearSessionFolderSelective();
+}, 30 * 60 * 1000);
 
 function clearSessionFolderSelective(dir = sessionFolder) {
   if (!fs.existsSync(dir)) {
@@ -48,80 +51,22 @@ function clearSessionFolderSelective(dir = sessionFolder) {
     if (stat.isDirectory()) {
       clearSessionFolderSelective(fullPath);
       fs.rmdirSync(fullPath);
-    } else {
-      if (!entry.startsWith('pre-key')) {
-        try {
-          fs.unlinkSync(fullPath);
-        } catch {}
-      }
+    } else if (!entry.startsWith('pre-key')) {
+      try { fs.unlinkSync(fullPath); } catch {}
     }
   }
-  console.log(`Cartella sessioni pulita (file non critici rimossi): ${new Date().toLocaleTimeString()}`);
 }
 
-function purgeSession(sessionDir, cleanPreKeys = false) {
-  if (!existsSync(sessionDir)) return;
-  const files = readdirSync(sessionDir);
-  files.forEach(file => {
-    if (file === 'creds.json') return;
-    const filePath = path.join(sessionDir, file);
-    const stats = statSync(filePath);
-    const fileAge = (Date.now() - stats.mtimeMs) / (1000 * 60 * 60 * 24);
-    if (file.startsWith('pre-key') && cleanPreKeys) {
-      if (fileAge > 1) {
-        try {
-          unlinkSync(filePath);
-        } catch {}
-      }
-    } else if (!file.startsWith('pre-key')) {
-      try {
-        if (stats.isDirectory()) {
-          rmSync(filePath, { recursive: true, force: true });
-        } else {
-          unlinkSync(filePath);
-        }
-      } catch {}
-    }
-  });
-}
-
-// Timer inizializzati con protezioni
-setInterval(async () => {
-  if (stopped === 'close' || !global.conn || !global.conn.user) return;
-  clearSessionFolderSelective();
-}, 30 * 60 * 1000);
-
-setInterval(async () => {
-  if (stopped === 'close' || !global.conn || !global.conn.user) return;
-  purgeSession(`./sessioni`);
-  const subBotDir = `./${global?.authFileJB || 'chatunity-sub'}`;
-  if (existsSync(subBotDir)) {
-    const subBotFolders = readdirSync(subBotDir).filter(file => statSync(join(subBotDir, file)).isDirectory());
-    subBotFolders.forEach(folder => purgeSession(join(subBotDir, folder)));
-  }
-}, 20 * 60 * 1000);
-
-setInterval(async () => {
-  if (stopped === 'close' || !global.conn || !global.conn.user) return;
-  purgeSession(`./sessioni`, true);
-  const subBotDir = `./${global?.authFileJB || 'chatunity-sub'}`;
-  if (existsSync(subBotDir)) {
-    const subBotFolders = readdirSync(subBotDir).filter(file => statSync(join(subBotDir, file)).isDirectory());
-    subBotFolders.forEach(folder => purgeSession(join(subBotDir, folder), true));
-  }
-}, 3 * 60 * 60 * 1000);
-
-// **IMPORT BAILEYS DOPO INIZIALIZZAZIONE GLOBALI**
+// Baileys imports
 const { useMultiFileAuthState, fetchLatestBaileysVersion, makeCacheableSignalKeyStore, Browsers, jidNormalizedUser, makeInMemoryStore, DisconnectReason } = await import('@chatunity/baileys');
 const { chain } = lodash;
-const PORT = process.env.PORT || process.env.SERVER_PORT || 3000;
 protoType();
 serialize();
 
+const PORT = process.env.PORT || 3000;
 let methodCodeQR = process.argv.includes("qr");
 let methodCode = process.argv.includes("code");
 let MethodMobile = process.argv.includes("mobile");
-let phoneNumber = global?.botNumberCode;
 
 function generateRandomCode(length = 8) {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
@@ -132,82 +77,47 @@ function generateRandomCode(length = 8) {
   return result;
 }
 
-// **FIX DEFINITIVO: FUNZIONE CONSOLE MODIFICATA**
-function redefineConsoleMethod(methodName, filterStrings) {
-  if (!console[methodName] || typeof console[methodName] !== 'function') return;
+// ✅ CONSOLE FILTER SEMPLIFICATO (dopo tutti gli import)
+function safeConsoleFilter() {
+  const filterStrings = [
+    "Q2xvc2luZyBzdGFsZSBvcGVu","Q2xvc2luZyBvcGVuIHNlc3Npb24=",
+    "RmFpbGVkIHRvIGRlY3J5cHQ=","U2Vzc2lvbiBlcnJvcg==","RXJyb3I6IEJhZCBNQUM=",
+    "RGVjcnlwdGVkIG1lc3NhZ2U="
+  ];
   
-  const originalMethod = console[methodName];
-  console[methodName] = function (...args) {
-    if (args.length === 0) {
-      return originalMethod.apply(console, args);
+  ['log', 'warn', 'error'].forEach(method => {
+    if (typeof console[method] === 'function') {
+      const original = console[method];
+      console[method] = (...args) => {
+        if (args[0] && typeof args[0] === 'string' && 
+            filterStrings.some(f => args[0].includes(atob(f)))) {
+          args[0] = '[FILTRATO]';
+        }
+        original.apply(console, args);
+      };
     }
-    
-    const message = String(args[0] || '');
-    if (filterStrings.some(filterString => message.includes(atob(filterString)))) {
-      args[0] = '[FILTRATO]';
-    }
-    return originalMethod.apply(console, args);
-  };
+  });
 }
 
-global.__filename = function filename(pathURL = import.meta.url, rmPrefix = platform !== 'win32') {
-  return rmPrefix ? /file:\/\/\//.test(pathURL) ? fileURLToPath(pathURL) : pathURL : pathToFileURL(pathURL).toString();
-};
+safeConsoleFilter();
 
-global.__dirname = function dirname(pathURL) {
-  return path.dirname(global.__filename(pathURL, true));
-};
+global.__filename = (pathURL = import.meta.url, rmPrefix = platform !== 'win32') => 
+  rmPrefix ? /file:\/\/\//.test(pathURL) ? fileURLToPath(pathURL) : pathURL : pathToFileURL(pathURL).toString();
 
-global.__require = function require(dir = import.meta.url) {
-  return createRequire(dir);
-};
-
-global.API = (name, path = '/', query = {}, apikeyqueryname) => {
-  const base = name in global.APIs ? global.APIs[name] : name;
-  const params = query || apikeyqueryname ? '?' + new URLSearchParams(Object.entries({ 
-    ...query, 
-    ...(apikeyqueryname ? { [apikeyqueryname]: global.APIKeys[name in global.APIs ? global.APIs[name] : name] } : {}) 
-  })) : '';
-  return base + path + params;
-};
-
-global.timestamp = { start: new Date };
-const __dirname_base = global.__dirname(import.meta.url);
+global.__dirname = (pathURL) => path.dirname(global.__filename(pathURL, true));
+global.__require = (dir = import.meta.url) => createRequire(dir);
 
 global.opts = new Object(yargs(process.argv.slice(2)).exitProcess(false).parse());
 global.prefix = new RegExp('^[' + (opts['prefix'] || '*/!#$%+£¢€¥^°=¶∆×÷π√✓©®&.\\-.@').replace(/[|\\{}()[\]^$+*.\-\^]/g, '\\$&') + ']');
 
 global.db = new Low(/https?:\/\//.test(opts['db'] || '') ? new cloudDBAdapter(opts['db']) : new JSONFile('database.json'));
-global.DATABASE = global.db;
-
-global.loadDatabase = async function loadDatabase() {
-  if (global.db.READ) {
-    return new Promise((resolve) => {
-      const interval = setInterval(async () => {
-        if (!global.db.READ) {
-          clearInterval(interval);
-          resolve(global.db.data == null ? await global.loadDatabase() : global.db.data);
-        }
-      }, 100);
-    });
-  }
+global.loadDatabase = async () => {
   if (global.db.data !== null) return global.db.data;
-  
   global.db.READ = true;
-  try {
-    await global.db.read();
-  } catch (e) {
-    console.error('Errore lettura DB:', e);
-  }
+  await global.db.read().catch(console.error);
   global.db.READ = false;
-  
   global.db.data = {
-    users: {},
-    chats: {},
-    stats: {},
-    msgs: {},
-    sticker: {},
-    settings: {},
+    users: {}, chats: {}, stats: {}, msgs: {}, sticker: {}, settings: {},
     ...(global.db.data || {}),
   };
   global.db.chain = chain(global.db.data);
@@ -221,230 +131,158 @@ global.authFile = 'sessioni';
 global.authFileJB = 'chatunity-sub';
 
 const { state, saveCreds } = await useMultiFileAuthState(global.authFile);
-const msgRetryCounterMap = () => {};
 const msgRetryCounterCache = new NodeCache();
+const msgRetryCounterMap = () => {};
 const { version } = await fetchLatestBaileysVersion();
 
-let rl = readline.createInterface({
-  input: process.stdin,
-  output: process.stdout,
-  terminal: true,
+let rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+const question = (text) => new Promise(resolve => {
+  rl.question(text, answer => resolve(answer.trim()));
 });
 
-const question = (text) => {
-  rl.clearLine(rl.input, 0);
-  return new Promise((resolve) => {
-    rl.question(text, (answer) => {
-      rl.clearLine(rl.input, 0);
-      resolve(answer.trim());
-    });
-  });
-};
-
-let opzione;
+let opzione = '1';
 if (!methodCodeQR && !methodCode && !fs.existsSync(`./${global.authFile}/creds.json`)) {
+  const menu = `╭★────★────★────★
+│ 1️⃣ QR Code
+│ 2️⃣ Codice 8 caratteri
+╰★────★────★────★`;
   do {
-    const menu = `╭★────★────★────★────★────★
-│      ꒰ ¡METODO DI COLLEGAMENTO! ꒱
-│
-│  👾  Opzione 1: Codice QR
-│  ☁️  Opzione 2: Codice 8 caratteri
-│
-╰★────★────★────★────★
-               ꒷꒦ ✦ ChatUnity ✦ ꒷꒦
-╰♡꒷ ๑ ⋆˚₊⋆───ʚ˚ɞ───⋆˚₊⋆ ๑ ⪩﹐
-`;
-    opzione = await question(menu + '\nInserisci la tua scelta ---> ');
-    if (!/^[1-2]$/.test(opzione)) {
-      console.log('❌ Opzione non valida, inserisci 1 o 2');
-    }
-  } while ((opzione !== '1' && opzione !== '2') || fs.existsSync(`./${global.authFile}/creds.json`));
-} else {
-  opzione = '1';
+    opzione = await question(menu + '\nScelta: ');
+  } while (!/^[1-2]$/.test(opzione));
 }
 
-// **APPLICAZIONE CONSOLE FILTER DOPO TUTTE LE DEFINIZIONI**
-const filterStrings = [
-  "Q2xvc2luZyBzdGFsZSBvcGVu",
-  "Q2xvc2luZyBvcGVuIHNlc3Npb24=",
-  "RmFpbGVkIHRvIGRlY3J5cHQ=",
-  "U2Vzc2lvbiBlcnJvcg==",
-  "RXJyb3I6IEJhZCBNQUM=",
-  "RGVjcnlwdGVkIG1lc3NhZ2U="
-];
-
-console.info = () => {};
-console.debug = () => {};
-['log', 'warn', 'error'].forEach(methodName => redefineConsoleMethod(methodName, filterStrings));
-
-const groupMetadataCache = new NodeCache({ stdTTL: 300, checkperiod: 60, maxKeys: 500 });
-global.groupCache = groupMetadataCache;
-
-const logger = pino({
-  level: 'silent',
-  redact: {
-    paths: ['creds.*', 'auth.*', 'account.*', 'media.*.directPath', 'media.*.url', 'node.content[*].enc', 'password', 'token', '*.secret'],
-    censor: '***'
-  },
-  timestamp: () => `,"time":"${new Date().toJSON()}"`
-});
-
-global.jidCache = new NodeCache({ stdTTL: 600, useClones: false, maxKeys: 1000 });
+const logger = pino({ level: 'silent' });
 global.store = makeInMemoryStore({ logger });
+global.jidCache = new NodeCache({ stdTTL: 600 });
+global.groupCache = new NodeCache({ stdTTL: 300 });
 
 const connectionOptions = {
-  logger,
-  printQRInTerminal: opzione === '1' || methodCodeQR,
+  logger, printQRInTerminal: opzione === '1',
   mobile: MethodMobile,
-  auth: {
-    creds: state.creds,
-    keys: makeCacheableSignalKeyStore(state.keys, logger),
-  },
-  browser: (opzione === '1' || methodCodeQR) ? Browsers.windows('Chrome') : Browsers.macOS('Safari'),
+  auth: { creds: state.creds, keys: makeCacheableSignalKeyStore(state.keys, logger) },
+  browser: Browsers.windows('Chrome'),
   version,
-  markOnlineOnConnect: false,
   generateHighQualityLinkPreview: true,
-  syncFullHistory: false,
-  linkPreviewImageThumbnailWidth: 192,
-  getMessage: async (key) => {
-    try {
-      const jid = global.conn?.decodeJid(key.remoteJid);
-      const msg = await global.store.loadMessage(jid, key.id);
-      return msg?.message || undefined;
-    } catch {
-      return undefined;
-    }
-  },
-  defaultQueryTimeoutMs: 60000,
-  connectTimeoutMs: 60000,
-  keepAliveIntervalMs: 30000,
-  emitOwnEvents: true,
-  fireInitQueries: true,
-  msgRetryCounterCache,
-  msgRetryCounterMap,
-  retryRequestDelayMs: 250,
-  maxMsgRetryCount: 3,
-  shouldIgnoreJid: jid => false
+  msgRetryCounterCache, msgRetryCounterMap
 };
 
 global.conn = makeWASocket(connectionOptions);
 global.store.bind(global.conn.ev);
 
-global.conn.isInit = false;
-global.conn.well = false;
-
-// **HANDLER DEFINITO**
-global.reloadHandler = async function (restatConn) {
+// ✅ HANDLER DEFINITO SEMPRE (fallback incluso)
+global.reloadHandler = async (restart = false) => {
+  console.log(chalk.yellow('🔄 Caricamento handler...'));
+  
   try {
-    const Handler = await import(`./handler.js?update=${Date.now()}`).catch(console.error);
-    if (Handler && Object.keys(Handler).length) {
-      global.handler = Handler;
+    if (fs.existsSync('./handler.js')) {
+      const Handler = await import('./handler.js');
+      global.handler = Handler.default || Handler;
+      console.log(chalk.green('✅ Handler caricato da handler.js'));
+    } else {
+      console.log(chalk.yellow('⚠️ handler.js non trovato, uso handler minimale'));
+      // ✅ FALLBACK HANDLER MINIMALE
+      global.handler = {
+        handler: async (m) => {
+          if (!m.message) return;
+          const text = m.text || '';
+          if (text && text.startsWith('ping')) {
+            await m.reply('Pong! ✅');
+          } else if (text === '.menu') {
+            await m.reply(`🔥 ChatUnity Bot attivo!
+• ping - Test connessione
+• .menu - Questo menu
+• Prefix: ${global.prefix.source}`);
+          }
+        }
+      };
     }
   } catch (e) {
-    console.error('Errore caricamento handler:', e);
+    console.error(chalk.red('❌ Errore handler:', e.message);
+    // ✅ Fallback sempre attivo
+    global.handler = {
+      handler: async (m) => {
+        if (m.text === 'ping') await m.reply('Pong! Bot OK');
+        if (m.text === '.menu') await m.reply('Bot attivo! Prova "ping"');
+      }
+    };
+  }
+
+  // ✅ BIND EVENTI SEMPRE
+  if (global.conn && global.handler?.handler) {
+    global.conn.ev.off('messages.upsert');
+    global.conn.ev.on('messages.upsert', (...args) => {
+      global.handler.handler(...args);
+    });
+    console.log(chalk.green('✅ Event listener messaggi attivi'));
+  }
+
+  if (restart && global.conn) {
+    global.conn.ws?.close();
   }
   
-  if (restatConn && global.conn) {
-    const oldChats = global.conn.chats;
-    try {
-      global.conn.ws?.close();
-    } catch {}
-    global.conn.ev.removeAllListeners();
-    global.conn = makeWASocket(connectionOptions, { chats: oldChats });
-    global.store.bind(global.conn.ev);
-  }
-  
-  if (global.conn && !global.conn.isInit && global.handler) {
-    // Rimuovi listener precedenti
-    global.conn.ev.removeAllListeners('messages.upsert');
-    global.conn.ev.removeAllListeners('group-participants.update');
-    
-    global.conn.handler = global.handler.handler?.bind(global.conn);
-    global.conn.ev.on('messages.upsert', global.conn.handler);
-    
-    global.conn.isInit = true;
-  }
+  global.conn.isInit = true;
   return true;
 };
 
-// Event listeners principali
-global.conn.ev.on('connection.update', connectionUpdate);
+// ✅ EVENTI BASE
 global.conn.ev.on('creds.update', saveCreds);
 
 async function connectionUpdate(update) {
-  const { connection, lastDisconnect, isNewLogin, qr } = update;
+  const { connection, lastDisconnect, qr } = update;
   global.stopped = connection;
-  
-  if (isNewLogin) {
-    global.conn.isInit = true;
-    await global.reloadHandler();
-  }
-  
-  const code = lastDisconnect?.error?.output?.statusCode;
-  if (code && code !== DisconnectReason.loggedOut) {
-    setTimeout(() => global.reloadHandler(true).catch(console.error), 1000);
-  }
-  
-  if (qr && (opzione === '1' || methodCodeQR) && !global.qrGenerated) {
-    console.log(chalk.bold.yellow('🔗 SCANSIONA IL QR (scade in 45s)'));
+
+  if (qr && opzione === '1') {
+    console.log(chalk.bold.yellow('📱 SCANSIONA QR (60s)'));
     global.qrGenerated = true;
   }
 
   if (connection === 'open') {
+    console.log(chalk.bold.green('✅ CONNESSO CON SUCCESSO!'));
     global.qrGenerated = false;
-    global.connectionMessagesPrinted = {};
     
     if (!global.isLogoPrinted) {
-      console.log(chalk.hex('#3b0d95')('🟣 ChatUnity Bot Avviato!'));
+      console.log(chalk.hex('#3b0d95')('🔥 CHATUNITY BOT ATTIVO'));
       global.isLogoPrinted = true;
     }
     
+    // ✅ CARICA HANDLER ALLA CONNESSIONE
     await global.reloadHandler();
+    console.log(chalk.green('🎉 Bot pronto! Prova: ping o .menu'));
+  }
+
+  if (connection === 'close') {
+    const code = lastDisconnect?.error?.output?.statusCode;
+    console.log(chalk.red(`❌ Disconnesso: ${code}`));
+    if (code !== DisconnectReason.loggedOut) {
+      setTimeout(() => global.reloadHandler(true), 3000);
+    }
   }
 }
 
-// **AVVIO FINALE**
-(async () => {
-  console.log(chalk.bold.magenta('🚀 Avvio ChatUnity Bot...'));
-  
-  if (!fs.existsSync(`./${global.authFile}/creds.json`)) {
-    if (opzione === '2' || methodCode) {
-      setTimeout(async () => {
-        const addNumber = phoneNumber?.replace(/\D/g, '') || '39xxxxxxxxx';
-        const randomCode = generateRandomCode();
-        const code = await global.conn.requestPairingCode(addNumber, randomCode);
-        console.log(chalk.bold.bgBlueBright(`🔑 CODICE: ${code?.match(/.{1,4}/g)?.join('-') || code}`));
-      }, 2000);
-    }
-  }
-  
-  await global.reloadHandler();
-  console.log(chalk.bold.green('✅ Bot pronto!'));
-})();
+global.conn.ev.on('connection.update', connectionUpdate);
 
-// Plugin system semplificato
-const pluginFolder = './plugins/index';
-if (existsSync(pluginFolder)) {
-  const pluginFilter = filename => /\.js$/.test(filename);
+// ✅ AVVIO IMMEDIATO
+console.log(chalk.cyan('🚀 Avvio ChatUnity...'));
+await global.reloadHandler();
+console.log(chalk.green('✅ Inizializzazione completata!'));
+
+// ✅ PLUGIN SYSTEM (opzionale)
+if (fs.existsSync('./plugins/index')) {
+  const pluginFolder = './plugins/index';
   global.plugins = {};
-
-  async function filesInit() {
-    for (const filename of readdirSync(pluginFolder).filter(pluginFilter)) {
+  
+  async function loadPlugins() {
+    for (const file of readdirSync(pluginFolder).filter(f => f.endsWith('.js'))) {
       try {
-        const file = join(pluginFolder, filename);
-        const module = await import(fileURLToPath(pathToFileURL(file)));
-        global.plugins[filename] = module.default || module;
+        const mod = await import(join(pluginFolder, file));
+        global.plugins[file] = mod.default || mod;
+        console.log(chalk.green(`✅ Plugin: ${file}`));
       } catch (e) {
-        console.error(`Plugin error ${filename}:`, e);
+        console.error(chalk.red(`❌ Plugin ${file}: ${e.message}`));
       }
     }
   }
-  filesInit();
+  loadPlugins();
 }
 
-process.on('uncaughtException', (err) => {
-  console.error('Uncaught Exception:', err);
-});
-process.on('unhandledRejection', (reason) => {
-  console.error('Unhandled Rejection:', reason);
-});
+process.on('uncaughtException', console.error);
