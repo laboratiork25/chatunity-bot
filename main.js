@@ -129,6 +129,7 @@ function generateRandomCode(length = 8) {
   return result;
 }
 
+// ✅ FIX 1: redefineConsoleMethod CORRETTO
 function redefineConsoleMethod(methodName, filterStrings) {
   if (typeof console[methodName] !== 'function') return;
   const originalConsoleMethod = console[methodName];
@@ -136,7 +137,7 @@ function redefineConsoleMethod(methodName, filterStrings) {
     if (args.length === 0) return originalConsoleMethod.apply(console, args);
     const message = String(args[0] || '');
     if (filterStrings.some(filterString => message.includes(atob(filterString)))) {
-      args[0] = "[FILTRATO]";
+      args[0] = "";
     }
     return originalConsoleMethod.apply(console, args);
   };
@@ -161,6 +162,7 @@ const __dirname = global.__dirname(import.meta.url);
 global.opts = new Object(yargs(process.argv.slice(2)).exitProcess(false).parse());
 global.prefix = new RegExp('^[' + (opts['prefix'] || '*/!#$%+£¢€¥^°=¶∆×÷π√✓©®&.\\-.@').replace(/[|\\{}()[\]^$+*.\-\^]/g, '\\$&') + ']');
 
+// ✅ FIX 2: DATABASE sempre JSONFile (no cloudDBAdapter)
 global.db = new Low(new JSONFile('database.json'));
 global.DATABASE = global.db;
 global.loadDatabase = async function loadDatabase() {
@@ -344,7 +346,11 @@ const connectionOptions = {
   maxMsgRetryCount: 3,
   shouldIgnoreJid: jid => false,
   patchMessageBeforeSending: (message) => {
-    const requiresPatch = !!(message.buttonsMessage || message.templateMessage || message.listMessage);
+    const requiresPatch = !!(
+      message.buttonsMessage ||
+      message.templateMessage ||
+      message.listMessage
+    );
     if (requiresPatch) {
       message = {
         viewOnceMessage: {
@@ -378,6 +384,7 @@ if (!fs.existsSync(`./${global.authFile}/creds.json`)) {
         if (!phoneNumber.startsWith('+')) phoneNumber = `+${phoneNumber}`;
         rl.close();
       }
+      // ✅ FIX 3: PAIRING CODE con try-catch
       setTimeout(async () => {
         try {
           const randomCode = generateRandomCode();
@@ -385,7 +392,7 @@ if (!fs.existsSync(`./${global.authFile}/creds.json`)) {
           codeBot = codeBot?.match(/.{1,4}/g)?.join("-") || codeBot;
           console.log(chalk.bold.white(chalk.bgBlueBright('꒰🩸꒱ ◦•≫ CODICE DI COLLEGAMENTO:')), chalk.bold.white(chalk.white(codeBot)));
         } catch (err) {
-          console.error(chalk.red('Errore pairing code:', err.message));
+          console.error(chalk.red('❌ Errore pairing code:'), err.message);
         }
       }, 3000);
     }
