@@ -1,3 +1,4 @@
+
 process.env['NODE_TLS_REJECT_UNAUTHORIZED'] = '1';
 import './config.js';
 import { createRequire } from 'module';
@@ -390,7 +391,93 @@ if (!fs.existsSync(`./${global.authFile}/creds.json`)) {
 global.conn.isInit = false;
 global.conn.well = false;
 
-// Funzione connectionUpdate definita PRIMA di reloadHandler
+// DEFINIZIONE DI reloadHandler CON CONTROLLI COMPLETI
+global.reloadHandler = async function (restatConn) {
+  try {
+    const Handler = await import(`./handler.js?update=${Date.now()}`).catch(console.error);
+    if (Object.keys(Handler || {}).length) {
+      global.handler = Handler;
+    }
+  } catch (e) {
+    console.error(chalk.red('❌ Errore nel caricamento handler:'), e);
+    return false;
+  }
+  
+  if (restatConn && global.conn) {
+    const oldChats = global.conn.chats;
+    try {
+      global.conn.ws.close();
+    } catch { }
+    global.conn.ev.removeAllListeners();
+    global.conn = makeWASocket(connectionOptions, { chats: oldChats });
+    global.store.bind(global.conn.ev);
+    global.conn.isInit = true;
+  }
+  
+  if (global.conn && global.handler) {
+    // RIMUOVI VECCHI LISTENER CON CONTROLLI
+    if (typeof global.conn.handler === 'function') {
+      global.conn.ev.off('messages.upsert', global.conn.handler);
+    }
+    if (typeof global.conn.participantsUpdate === 'function') {
+      global.conn.ev.off('group-participants.update', global.conn.participantsUpdate);
+    }
+    if (typeof global.conn.groupsUpdate === 'function') {
+      global.conn.ev.off('groups.update', global.conn.groupsUpdate);
+    }
+    if (typeof global.conn.onDelete === 'function') {
+      global.conn.ev.off('message.delete', global.conn.onDelete);
+    }
+    if (typeof global.conn.onCall === 'function') {
+      global.conn.ev.off('call', global.conn.onCall);
+    }
+    if (typeof global.conn.connectionUpdate === 'function') {
+      global.conn.ev.off('connection.update', global.conn.connectionUpdate);
+    }
+    if (typeof global.conn.credsUpdate === 'function') {
+      global.conn.ev.off('creds.update', global.conn.credsUpdate);
+    }
+
+    // IMPOSTA MESSAGGI
+    global.conn.welcome = '@user benvenuto/a in @subject';
+    global.conn.bye = '@user ha abbandonato il gruppo';
+    global.conn.spromote = '@user è stato promosso ad amministratore';
+    global.conn.sdemote = '@user non è più amministratore';
+    global.conn.sIcon = 'immagine gruppo modificata';
+    global.conn.sRevoke = 'link reimpostato, nuovo link: @revoke';
+
+    // BIND NUOVI HANDLER
+    global.conn.handler = global.handler.handler.bind(global.conn);
+    global.conn.participantsUpdate = global.handler.participantsUpdate.bind(global.conn);
+    global.conn.groupsUpdate = global.handler.groupsUpdate.bind(global.conn);
+    global.conn.onDelete = global.handler.deleteUpdate.bind(global.conn);
+    global.conn.onCall = global.handler.callUpdate.bind(global.conn);
+    global.conn.connectionUpdate = connectionUpdate.bind(global.conn);
+    global.conn.credsUpdate = saveCreds.bind(global.conn, true);
+
+    // REGISTRA NUOVI LISTENER
+    global.conn.ev.on('messages.upsert', global.conn.handler);
+    global.conn.ev.on('group-participants.update', global.conn.participantsUpdate);
+    global.conn.ev.on('groups.update', global.conn.groupsUpdate);
+    global.conn.ev.on('message.delete', global.conn.onDelete);
+    global.conn.ev.on('call', global.conn.onCall);
+    global.conn.ev.on('connection.update', global.conn.connectionUpdate);
+    global.conn.ev.on('creds.update', global.conn.credsUpdate);
+    
+    console.log(chalk.green('✅ Handler registrato con successo!'));
+    global.conn.isInit = false;
+  }
+  return true;
+};
+
+async function chatunityedition() {
+  try {
+    const mainChannelId = global.IdCanale?.[0] || '120363259442839354@newsletter';
+    await global.conn.newsletterFollow(mainChannelId);
+  } catch (error) {}
+}
+
+// Funzione connectionUpdate definita QUI
 async function connectionUpdate(update) {
   const { connection, lastDisconnect, isNewLogin, qr } = update;
   global.stopped = connection;
@@ -438,10 +525,12 @@ async function connectionUpdate(update) {
       console.log(chalk.bold.green('✅ Bot entrato nel gruppo supporto con successo - non abbandonare!'));
     } catch (error) {
       console.error(chalk.bold.red('❌ Errore nell\'accettare l\'invito del gruppo:'), error.message);
-      if (error.data === 401) {
-        console.error(chalk.bold.yellow('⚠️ Errore di autorizzazione: controlla le credenziali o la sessione'));
-      }
     }
+    
+    // CARICA HANDLER DOPO LA CONNESSIONE
+    console.log(chalk.cyan('🔄 Caricamento handler...'));
+    await global.reloadHandler(false);
+    console.log(chalk.green('✅ Bot pronto a ricevere messaggi!'));
   }
 
   if (connection === 'close') {
@@ -474,7 +563,7 @@ async function connectionUpdate(update) {
         console.error('Errore in reloadHandler:', e);
       }
     } else if (reason === DisconnectReason.restartRequired && !global.connectionMessagesPrinted.restartRequired) {
-      console.log(chalk.bold.magentaBright(`\n⭑⭒━━━✦❘༻ CONNESSO CON SUCCESSO  ༺❘✦━━━⭒⭑`));
+      console.log(chalk.bold.magentaBright(`\n⭑⭒━━━✦❘༻ RIAVVIO RICHIESTO ༺❘✦━━━⭒⭑`));
       global.connectionMessagesPrinted.restartRequired = true;
       try {
         await global.reloadHandler(true);
@@ -494,86 +583,6 @@ async function connectionUpdate(update) {
       global.connectionMessagesPrinted.unknown = true;
     }
   }
-}
-
-// DEFINIZIONE DI reloadHandler DOPO connectionUpdate CON CONTROLLI DI SICUREZZA
-global.reloadHandler = async function (restatConn) {
-  try {
-    const Handler = await import(`./handler.js?update=${Date.now()}`).catch(console.error);
-    if (Object.keys(Handler || {}).length) {
-      global.handler = Handler;
-    }
-  } catch (e) {
-    console.error(e);
-  }
-  
-  if (restatConn && global.conn) {
-    const oldChats = global.conn.chats;
-    try {
-      global.conn.ws.close();
-    } catch { }
-    global.conn.ev.removeAllListeners();
-    global.conn = makeWASocket(connectionOptions, { chats: oldChats });
-    global.store.bind(global.conn.ev);
-    global.conn.isInit = true;
-  }
-  
-  if (global.conn && !global.conn.isInit && global.handler) {
-    // CONTROLLI DI SICUREZZA: rimuovi solo se esistono
-    if (typeof global.conn.handler === 'function') {
-      global.conn.ev.off('messages.upsert', global.conn.handler);
-    }
-    if (typeof global.conn.participantsUpdate === 'function') {
-      global.conn.ev.off('group-participants.update', global.conn.participantsUpdate);
-    }
-    if (typeof global.conn.groupsUpdate === 'function') {
-      global.conn.ev.off('groups.update', global.conn.groupsUpdate);
-    }
-    if (typeof global.conn.onDelete === 'function') {
-      global.conn.ev.off('message.delete', global.conn.onDelete);
-    }
-    if (typeof global.conn.onCall === 'function') {
-      global.conn.ev.off('call', global.conn.onCall);
-    }
-    if (typeof global.conn.connectionUpdate === 'function') {
-      global.conn.ev.off('connection.update', global.conn.connectionUpdate);
-    }
-    if (typeof global.conn.credsUpdate === 'function') {
-      global.conn.ev.off('creds.update', global.conn.credsUpdate);
-    }
-
-    global.conn.welcome = '@user benvenuto/a in @subject';
-    global.conn.bye = '@user ha abbandonato il gruppo';
-    global.conn.spromote = '@user è stato promosso ad amministratore';
-    global.conn.sdemote = '@user non è più amministratore';
-    global.conn.sIcon = 'immagine gruppo modificata';
-    global.conn.sRevoke = 'link reimpostato, nuovo link: @revoke';
-
-    global.conn.handler = global.handler.handler.bind(global.conn);
-    global.conn.participantsUpdate = global.handler.participantsUpdate.bind(global.conn);
-    global.conn.groupsUpdate = global.handler.groupsUpdate.bind(global.conn);
-    global.conn.onDelete = global.handler.deleteUpdate.bind(global.conn);
-    global.conn.onCall = global.handler.callUpdate.bind(global.conn);
-    global.conn.connectionUpdate = connectionUpdate.bind(global.conn);
-    global.conn.credsUpdate = saveCreds.bind(global.conn, true);
-
-    global.conn.ev.on('messages.upsert', global.conn.handler);
-    global.conn.ev.on('group-participants.update', global.conn.participantsUpdate);
-    global.conn.ev.on('groups.update', global.conn.groupsUpdate);
-    global.conn.ev.on('message.delete', global.conn.onDelete);
-    global.conn.ev.on('call', global.conn.onCall);
-    global.conn.ev.on('connection.update', global.conn.connectionUpdate);
-    global.conn.ev.on('creds.update', global.conn.credsUpdate);
-    global.conn.isInit = false;
-  }
-  return true;
-};
-
-async function chatunityedition() {
-  try {
-    const mainChannelId = global.IdCanale?.[0] || '120363259442839354@newsletter';
-    await global.conn.newsletterFollow(mainChannelId);
-  } catch (error) {}
 }
 
 if (!opts['test']) {
@@ -662,7 +671,6 @@ async function connectSubBots() {
   ⋆  ︵︵ ★ ChatUnity connesso ★ ︵︵ ⋆
 ╰. ꒷꒦ ꒷꒦‧˚₊˚꒷꒦꒷‧˚₊˚꒷꒦꒷`));
     await connectSubBots();
-    await global.reloadHandler();
   } catch (error) {
     console.error(chalk.bold.bgRedBright(`🥀 Errore nell'avvio del bot: `), error);
   }
