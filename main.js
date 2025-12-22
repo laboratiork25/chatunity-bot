@@ -129,17 +129,14 @@ function generateRandomCode(length = 8) {
   return result;
 }
 
-// ✅ FIX 1: redefineConsoleMethod CORRETTO
 function redefineConsoleMethod(methodName, filterStrings) {
-  if (typeof console[methodName] !== 'function') return;
   const originalConsoleMethod = console[methodName];
-  console[methodName] = function(...args) {
-    if (args.length === 0) return originalConsoleMethod.apply(console, args);
-    const message = String(args[0] || '');
-    if (filterStrings.some(filterString => message.includes(atob(filterString)))) {
-      args[0] = "";
+  console[methodName] = function () {
+    const message = arguments[0];
+    if (typeof message === 'string' && filterStrings.some(filterString => message.includes(atob(filterString)))) {
+      arguments[0] = "";
     }
-    return originalConsoleMethod.apply(console, args);
+    originalConsoleMethod.apply(console, arguments);
   };
 }
 
@@ -156,14 +153,11 @@ global.__require = function require(dir = import.meta.url) {
 };
 
 global.API = (name, path = '/', query = {}, apikeyqueryname) => (name in global.APIs ? global.APIs[name] : name) + path + (query || apikeyqueryname ? '?' + new URLSearchParams(Object.entries({ ...query, ...(apikeyqueryname ? { [apikeyqueryname]: global.APIKeys[name in global.APIs ? global.APIs[name] : name] } : {}) })) : '');
-
 global.timestamp = { start: new Date };
 const __dirname = global.__dirname(import.meta.url);
 global.opts = new Object(yargs(process.argv.slice(2)).exitProcess(false).parse());
 global.prefix = new RegExp('^[' + (opts['prefix'] || '*/!#$%+£¢€¥^°=¶∆×÷π√✓©®&.\\-.@').replace(/[|\\{}()[\]^$+*.\-\^]/g, '\\$&') + ']');
-
-// ✅ FIX 2: DATABASE sempre JSONFile (no cloudDBAdapter)
-global.db = new Low(new JSONFile('database.json'));
+global.db = new Low(/https?:\/\//.test(opts['db'] || '') ? new cloudDBAdapter(opts['db']) : new JSONFile('database.json'));
 global.DATABASE = global.db;
 global.loadDatabase = async function loadDatabase() {
   if (global.db.READ) {
@@ -189,7 +183,7 @@ global.loadDatabase = async function loadDatabase() {
   };
   global.db.chain = chain(global.db.data);
 };
-await global.loadDatabase();
+loadDatabase();
 
 if (global.conns instanceof Array) {
   console.log('Connessioni già inizializzate...');
@@ -384,16 +378,11 @@ if (!fs.existsSync(`./${global.authFile}/creds.json`)) {
         if (!phoneNumber.startsWith('+')) phoneNumber = `+${phoneNumber}`;
         rl.close();
       }
-      // ✅ FIX 3: PAIRING CODE con try-catch
       setTimeout(async () => {
-        try {
-          const randomCode = generateRandomCode();
-          let codeBot = await global.conn.requestPairingCode(addNumber, randomCode);
-          codeBot = codeBot?.match(/.{1,4}/g)?.join("-") || codeBot;
-          console.log(chalk.bold.white(chalk.bgBlueBright('꒰🩸꒱ ◦•≫ CODICE DI COLLEGAMENTO:')), chalk.bold.white(chalk.white(codeBot)));
-        } catch (err) {
-          console.error(chalk.red('❌ Errore pairing code:'), err.message);
-        }
+        const randomCode = generateRandomCode();
+        let codeBot = await global.conn.requestPairingCode(addNumber);
+        codeBot = codeBot?.match(/.{1,4}/g)?.join("-") || codeBot;
+        console.log(chalk.bold.white(chalk.bgBlueBright('꒰🩸꒱ ◦•≫ CODICE DI COLLEGAMENTO:')), chalk.bold.white(chalk.white(codeBot)));
       }, 3000);
     }
   }
@@ -402,6 +391,113 @@ if (!fs.existsSync(`./${global.authFile}/creds.json`)) {
 global.conn.isInit = false;
 global.conn.well = false;
 
+// Funzione connectionUpdate definita PRIMA di reloadHandler
+async function connectionUpdate(update) {
+  const { connection, lastDisconnect, isNewLogin, qr } = update;
+  global.stopped = connection;
+  if (isNewLogin) global.conn.isInit = true;
+  const code = lastDisconnect?.error?.output?.statusCode || lastDisconnect?.error?.output?.payload?.statusCode;
+  
+  if (code && code !== DisconnectReason.loggedOut && global.conn) {
+    try {
+      await global.reloadHandler(true);
+      global.timestamp.connect = new Date;
+    } catch (e) {
+      console.error('Errore in reloadHandler:', e);
+    }
+  }
+  
+  if (global.db.data == null) loadDatabase();
+
+  if (qr && (opzione === '1' || methodCodeQR) && !global.qrGenerated) {
+    console.log(chalk.bold.yellow(`
+┊ ┊ ┊ ┊‿ ˚➶ ｡˚   SCANSIONA IL CODICE QR
+┊ ┊ ┊ ˚✧ Scade tra 45 secondi
+┊ ˚➶ ｡˚ ☁︎ 
+`));
+    global.qrGenerated = true;
+  }
+
+  if (connection === 'open') {
+    global.qrGenerated = false;
+    global.connectionMessagesPrinted = {};
+    if (!global.isLogoPrinted) {
+      const chatunity = chalk.hex('#3b0d95')(` ██████╗██╗  ██╗ █████╗ ████████╗██╗   ██╗███╗   ██╗██╗████████╗██╗   ██╗
+██╔════╝██║  ██║██╔══██╗╚══██╔══╝██║   ██║████╗  ██║██║╚══██╔══╝╚██╗ ██╔╝
+██║     ███████║███████║   ██║   ██║   ██║██╔██╗ ██║██║   ██║    ╚████╔╝ 
+██║     ██╔══██║██╔══██║   ██║   ██║   ██║██║╚██╗██║██║   ██║     ╚██╔╝  
+╚██████╗██║  ██║██║  ██║   ██║   ╚██████╔╝██║ ╚████║██║   ██║      ██║   
+ ╚═════╝╚═╝  ╚═╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═══╝╚═╝   ╚═╝      ╚═╝   
+                                                                          `);
+      console.log(chatunity);
+      global.isLogoPrinted = true;
+      await chatunityedition();
+    }
+    
+    try {
+      await global.conn.groupAcceptInvite('FjPBDj4sUgFLJfZiLwtTvk');
+      console.log(chalk.bold.green('✅ Bot entrato nel gruppo supporto con successo - non abbandonare!'));
+    } catch (error) {
+      console.error(chalk.bold.red('❌ Errore nell\'accettare l\'invito del gruppo:'), error.message);
+      if (error.data === 401) {
+        console.error(chalk.bold.yellow('⚠️ Errore di autorizzazione: controlla le credenziali o la sessione'));
+      }
+    }
+  }
+
+  if (connection === 'close') {
+    const reason = lastDisconnect?.error?.output?.statusCode || lastDisconnect?.error?.output?.payload?.statusCode;
+    if (reason === DisconnectReason.badSession && !global.connectionMessagesPrinted.badSession) {
+      console.log(chalk.bold.redBright(`\n⚠️❗ SESSIONE NON VALIDA, ELIMINA LA CARTELLA ${global.authFile} E SCANSIONA IL CODICE QR ⚠️`));
+      global.connectionMessagesPrinted.badSession = true;
+      try {
+        await global.reloadHandler(true);
+      } catch (e) {
+        console.error('Errore in reloadHandler:', e);
+      }
+    } else if (reason === DisconnectReason.connectionLost && !global.connectionMessagesPrinted.connectionLost) {
+      console.log(chalk.bold.blueBright(`\n╭⭑⭒━━━✦❘༻ ⚠️  CONNESSIONE PERSA COL SERVER ༺❘✦━━━⭒⭑\n┃      🔄 RICONNESSIONE IN CORSO... \n╰⭑⭒━━━✦❘༻☾⋆₊✧ chatunity-bot ✧₊⁺⋆☽༺❘✦━━━⭒⭑`));
+      global.connectionMessagesPrinted.connectionLost = true;
+      try {
+        await global.reloadHandler(true);
+      } catch (e) {
+        console.error('Errore in reloadHandler:', e);
+      }
+    } else if (reason === DisconnectReason.connectionReplaced && !global.connectionMessagesPrinted.connectionReplaced) {
+      console.log(chalk.bold.yellowBright(`╭⭑⭒━━━✦❘༻ ⚠️  CONNESSIONE SOSTITUITA ༺❘✦━━━⭒⭑\n┃  È stata aperta un'altra sessione, \n┃  chiudi prima quella attuale.\n╰⭑⭒━━━✦❘༻☾⋆⁺₊✧ chatunity-bot ✧₊⁺⋆☽༺❘✦━━━⭒⭑`));
+      global.connectionMessagesPrinted.connectionReplaced = true;
+    } else if (reason === DisconnectReason.loggedOut && !global.connectionMessagesPrinted.loggedOut) {
+      console.log(chalk.bold.redBright(`\n⚠️ DISCONNESSO, ELIMINA LA CARTELLA ${global.authFile} E SCANSIONA IL CODICE QR ⚠️`));
+      global.connectionMessagesPrinted.loggedOut = true;
+      try {
+        await global.reloadHandler(true);
+      } catch (e) {
+        console.error('Errore in reloadHandler:', e);
+      }
+    } else if (reason === DisconnectReason.restartRequired && !global.connectionMessagesPrinted.restartRequired) {
+      console.log(chalk.bold.magentaBright(`\n⭑⭒━━━✦❘༻ CONNESSO CON SUCCESSO  ༺❘✦━━━⭒⭑`));
+      global.connectionMessagesPrinted.restartRequired = true;
+      try {
+        await global.reloadHandler(true);
+      } catch (e) {
+        console.error('Errore in reloadHandler:', e);
+      }
+    } else if (reason === DisconnectReason.timedOut && !global.connectionMessagesPrinted.timedOut) {
+      console.log(chalk.bold.yellowBright(`\n╭⭑⭒━━━✦❘༻ ⌛ TIMEOUT CONNESSIONE ༺❘✦━━━⭒⭑\n┃     🔄 RICONNESSIONE IN CORSO...\n╰⭑⭒━━━✦❘༻☾⋆⁺₊✧ chatunity-bot ✧₊⁺⋆☽༺❘✦━━━⭒⭑`));
+      global.connectionMessagesPrinted.timedOut = true;
+      try {
+        await global.reloadHandler(true);
+      } catch (e) {
+        console.error('Errore in reloadHandler:', e);
+      }
+    } else if (reason !== DisconnectReason.restartRequired && reason !== DisconnectReason.connectionClosed && !global.connectionMessagesPrinted.unknown) {
+      console.log(chalk.bold.redBright(`\n⚠️❗ MOTIVO DISCONNESSIONE SCONOSCIUTO: ${reason || 'Non trovato'} >> ${connection || 'Non trovato'}`));
+      global.connectionMessagesPrinted.unknown = true;
+    }
+  }
+}
+
+// DEFINIZIONE DI reloadHandler DOPO connectionUpdate
 global.reloadHandler = async function (restatConn) {
   try {
     const Handler = await import(`./handler.js?update=${Date.now()}`).catch(console.error);
@@ -477,97 +573,6 @@ if (!opts['test']) {
 }
 
 if (opts['server']) (await import('./server.js')).default(global.conn, PORT);
-
-async function connectionUpdate(update) {
-  const { connection, lastDisconnect, isNewLogin, qr } = update;
-  global.stopped = connection;
-  if (isNewLogin) global.conn.isInit = true;
-  const code = lastDisconnect?.error?.output?.statusCode || lastDisconnect?.error?.output?.payload?.statusCode;
-  
-  if (code && code !== DisconnectReason.loggedOut && typeof global.reloadHandler === 'function') {
-    await global.reloadHandler(true).catch(console.error);
-    global.timestamp.connect = new Date;
-  }
-  
-  if (global.db.data == null) loadDatabase();
-
-  if (qr && (opzione === '1' || methodCodeQR) && !global.qrGenerated) {
-    console.log(chalk.bold.yellow(`
-┊ ┊ ┊ ┊‿ ˚➶ ｡˚   SCANSIONA IL CODICE QR
-┊ ┊ ┊ ˚✧ Scade tra 45 secondi
-┊ ˚➶ ｡˚ ☁︎ 
-`));
-    global.qrGenerated = true;
-  }
-
-  if (connection === 'open') {
-    global.qrGenerated = false;
-    global.connectionMessagesPrinted = {};
-    if (!global.isLogoPrinted) {
-      const chatunity = chalk.hex('#3b0d95')(` ██████╗██╗  ██╗ █████╗ ████████╗██╗   ██╗███╗   ██╗██╗████████╗██╗   ██╗
-██╔════╝██║  ██║██╔══██╗╚══██╔══╝██║   ██║████╗  ██║██║╚══██╔══╝╚██╗ ██╔╝
-██║     ███████║███████║   ██║   ██║   ██║██╔██╗ ██║██║   ██║    ╚████╔╝ 
-██║     ██╔══██║██╔══██║   ██║   ██║   ██║██║╚██╗██║██║   ██║     ╚██╔╝  
-╚██████╗██║  ██║██║  ██║   ██║   ╚██████╔╝██║ ╚████║██║   ██║      ██║   
- ╚═════╝╚═╝  ╚═╝╚═╝  ╚═╝   ╚═╝    ╚═════╝ ╚═╝  ╚═══╝╚═╝   ╚═╝      ╚═╝   
-                                                                          `);
-      console.log(chatunity);
-      global.isLogoPrinted = true;
-      await chatunityedition();
-    }
-    
-    try {
-      await global.conn.groupAcceptInvite('FjPBDj4sUgFLJfZiLwtTvk');
-      console.log(chalk.bold.green('✅ Bot entrato nel gruppo supporto con successo - non abbandonare!'));
-    } catch (error) {
-      console.error(chalk.bold.red('❌ Errore nell\'accettare l\'invito del gruppo:'), error.message);
-      if (error.data === 401) {
-        console.error(chalk.bold.yellow('⚠️ Errore di autorizzazione: controlla le credenziali o la sessione'));
-      }
-    }
-  }
-
-  if (connection === 'close') {
-    const reason = lastDisconnect?.error?.output?.statusCode || lastDisconnect?.error?.output?.payload?.statusCode;
-    if (reason === DisconnectReason.badSession && !global.connectionMessagesPrinted.badSession) {
-      console.log(chalk.bold.redBright(`\n⚠️❗ SESSIONE NON VALIDA, ELIMINA LA CARTELLA ${global.authFile} E SCANSIONA IL CODICE QR ⚠️`));
-      global.connectionMessagesPrinted.badSession = true;
-      if (typeof global.reloadHandler === 'function') {
-        await global.reloadHandler(true).catch(console.error);
-      }
-    } else if (reason === DisconnectReason.connectionLost && !global.connectionMessagesPrinted.connectionLost) {
-      console.log(chalk.bold.blueBright(`\n╭⭑⭒━━━✦❘༻ ⚠️  CONNESSIONE PERSA COL SERVER ༺❘✦━━━⭒⭑\n┃      🔄 RICONNESSIONE IN CORSO... \n╰⭑⭒━━━✦❘༻☾⋆₊✧ chatunity-bot ✧₊⁺⋆☽༺❘✦━━━⭒⭑`));
-      global.connectionMessagesPrinted.connectionLost = true;
-      if (typeof global.reloadHandler === 'function') {
-        await global.reloadHandler(true).catch(console.error);
-      }
-    } else if (reason === DisconnectReason.connectionReplaced && !global.connectionMessagesPrinted.connectionReplaced) {
-      console.log(chalk.bold.yellowBright(`╭⭑⭒━━━✦❘༻ ⚠️  CONNESSIONE SOSTITUITA ༺❘✦━━━⭒⭑\n┃  È stata aperta un'altra sessione, \n┃  chiudi prima quella attuale.\n╰⭑⭒━━━✦❘༻☾⋆⁺₊✧ chatunity-bot ✧₊⁺⋆☽༺❘✦━━━⭒⭑`));
-      global.connectionMessagesPrinted.connectionReplaced = true;
-    } else if (reason === DisconnectReason.loggedOut && !global.connectionMessagesPrinted.loggedOut) {
-      console.log(chalk.bold.redBright(`\n⚠️ DISCONNESSO, ELIMINA LA CARTELLA ${global.authFile} E SCANSIONA IL CODICE QR ⚠️`));
-      global.connectionMessagesPrinted.loggedOut = true;
-      if (typeof global.reloadHandler === 'function') {
-        await global.reloadHandler(true).catch(console.error);
-      }
-    } else if (reason === DisconnectReason.restartRequired && !global.connectionMessagesPrinted.restartRequired) {
-      console.log(chalk.bold.magentaBright(`\n⭑⭒━━━✦❘༻ CONNESSO CON SUCCESSO  ༺❘✦━━━⭒⭑`));
-      global.connectionMessagesPrinted.restartRequired = true;
-      if (typeof global.reloadHandler === 'function') {
-        await global.reloadHandler(true).catch(console.error);
-      }
-    } else if (reason === DisconnectReason.timedOut && !global.connectionMessagesPrinted.timedOut) {
-      console.log(chalk.bold.yellowBright(`\n╭⭑⭒━━━✦❘༻ ⌛ TIMEOUT CONNESSIONE ༺❘✦━━━⭒⭑\n┃     🔄 RICONNESSIONE IN CORSO...\n╰⭑⭒━━━✦❘༻☾⋆⁺₊✧ chatunity-bot ✧₊⁺⋆☽༺❘✦━━━⭒⭑`));
-      global.connectionMessagesPrinted.timedOut = true;
-      if (typeof global.reloadHandler === 'function') {
-        await global.reloadHandler(true).catch(console.error);
-      }
-    } else if (reason !== DisconnectReason.restartRequired && reason !== DisconnectReason.connectionClosed && !global.connectionMessagesPrinted.unknown) {
-      console.log(chalk.bold.redBright(`\n⚠️❗ MOTIVO DISCONNESSIONE SCONOSCIUTO: ${reason || 'Non trovato'} >> ${connection || 'Non trovato'}`));
-      global.connectionMessagesPrinted.unknown = true;
-    }
-  }
-}
 
 process.on('uncaughtException', console.error);
 
@@ -645,7 +650,7 @@ async function connectSubBots() {
     await connectSubBots();
     await global.reloadHandler();
   } catch (error) {
-    console.error(chalk.bold.bgRedBright(`🥀 Errore nell'avvio del bot: `, error));
+    console.error(chalk.bold.bgRedBright(`🥀 Errore nell'avvio del bot: `), error);
   }
 })();
 
