@@ -18,7 +18,7 @@ import { Low, JSONFile } from 'lowdb';
 import readline from 'readline';
 import NodeCache from 'node-cache';
 
-const sessionFolder = path.join(process.cwd(), global.authFile || 'sessioni');
+const sessionFolder = path.join(process.cwd(), global?.authFile || 'sessioni');
 const tempDir = join(process.cwd(), 'temp');
 const tmpDir = join(process.cwd(), 'tmp');
 
@@ -29,7 +29,7 @@ if (!existsSync(tmpDir)) {
   mkdirSync(tmpDir, { recursive: true });
 }
 
-let stopped = 'open'; // Definito qui per evitare errori
+let stopped = 'open';
 
 function clearSessionFolderSelective(dir = sessionFolder) {
   if (!fs.existsSync(dir)) {
@@ -131,12 +131,12 @@ function generateRandomCode(length = 8) {
 
 function redefineConsoleMethod(methodName, filterStrings) {
   const originalConsoleMethod = console[methodName];
-  console[methodName] = function () {
-    const message = arguments[0];
+  console[methodName] = function (...args) {
+    const message = args[0];
     if (typeof message === 'string' && filterStrings.some(filterString => message.includes(atob(filterString)))) {
-      arguments[0] = "";
+      args[0] = "";
     }
-    originalConsoleMethod.apply(console, arguments);
+    originalConsoleMethod.apply(console, args);
   };
 }
 
@@ -153,12 +153,15 @@ global.__require = function require(dir = import.meta.url) {
 };
 
 global.API = (name, path = '/', query = {}, apikeyqueryname) => (name in global.APIs ? global.APIs[name] : name) + path + (query || apikeyqueryname ? '?' + new URLSearchParams(Object.entries({ ...query, ...(apikeyqueryname ? { [apikeyqueryname]: global.APIKeys[name in global.APIs ? global.APIs[name] : name] } : {}) })) : '');
+
 global.timestamp = { start: new Date };
 const __dirname = global.__dirname(import.meta.url);
 global.opts = new Object(yargs(process.argv.slice(2)).exitProcess(false).parse());
 global.prefix = new RegExp('^[' + (opts['prefix'] || '*/!#$%+£¢€¥^°=¶∆×÷π√✓©®&.\\-.@').replace(/[|\\{}()[\]^$+*.\-\^]/g, '\\$&') + ']');
+
 global.db = new Low(/https?:\/\//.test(opts['db'] || '') ? new cloudDBAdapter(opts['db']) : new JSONFile('database.json'));
 global.DATABASE = global.db;
+
 global.loadDatabase = async function loadDatabase() {
   if (global.db.READ) {
     return new Promise((resolve) => setInterval(async function () {
@@ -183,11 +186,10 @@ global.loadDatabase = async function loadDatabase() {
   };
   global.db.chain = chain(global.db.data);
 };
-loadDatabase();
 
-if (global.conns instanceof Array) {
-  console.log('Connessioni già inizializzate...');
-} else {
+await global.loadDatabase();
+
+if (!global.conns) {
   global.conns = [];
 }
 
@@ -196,9 +198,11 @@ global.authFile = 'sessioni';
 global.authFileJB = 'chatunity-sub';
 
 const { state, saveCreds } = await useMultiFileAuthState(global.authFile);
-const msgRetryCounterMap = (MessageRetryMap) => { };
+
+const msgRetryCounterMap = (MessageRetryMap) => {};
 const msgRetryCounterCache = new NodeCache();
 const { version } = await fetchLatestBaileysVersion();
+
 let rl = readline.createInterface({
   input: process.stdin,
   output: process.stdout,
@@ -243,8 +247,9 @@ const filterStrings = [
   "RXJyb3I6IEJhZCBNQUM=",
   "RGVjcnlwdGVkIG1lc3NhZ2U="
 ];
-console.info = () => { };
-console.debug = () => { };
+
+console.info = () => {};
+console.debug = () => {};
 ['log', 'warn', 'error'].forEach(methodName => redefineConsoleMethod(methodName, filterStrings));
 
 const groupMetadataCache = new NodeCache({ stdTTL: 300, checkperiod: 60, maxKeys: 500 });
@@ -280,7 +285,7 @@ const connectionOptions = {
     creds: state.creds,
     keys: makeCacheableSignalKeyStore(state.keys, logger),
   },
-  browser: opzione === '1' ? Browsers.windows('Chrome') : methodCodeQR ? Browsers.windows('Chrome') : Browsers.macOS('Safari'),
+  browser: opzione === '1' || methodCodeQR ? Browsers.windows('Chrome') : Browsers.macOS('Safari'),
   version: version,
   markOnlineOnConnect: false,
   generateHighQualityLinkPreview: true,
@@ -340,13 +345,9 @@ const connectionOptions = {
   maxMsgRetryCount: 3,
   shouldIgnoreJid: jid => false,
   patchMessageBeforeSending: (message) => {
-    const requiresPatch = !!(
-      message.buttonsMessage ||
-      message.templateMessage ||
-      message.listMessage
-    );
+    const requiresPatch = !!(message.buttonsMessage || message.templateMessage || message.listMessage);
     if (requiresPatch) {
-      message = {
+      return {
         viewOnceMessage: {
           message: {
             messageContextInfo: {
@@ -391,7 +392,7 @@ if (!fs.existsSync(`./${global.authFile}/creds.json`)) {
 global.conn.isInit = false;
 global.conn.well = false;
 
-// **DEFINIZIONE PRECOCE DI reloadHandler PER EVITARE L'ERRORE**
+// **HANDLER FUNCTION DEFINITA PRECOCEMENTE**
 global.reloadHandler = async function (restatConn) {
   try {
     const Handler = await import(`./handler.js?update=${Date.now()}`).catch(console.error);
@@ -406,7 +407,7 @@ global.reloadHandler = async function (restatConn) {
     const oldChats = global.conn.chats;
     try {
       global.conn.ws.close();
-    } catch { }
+    } catch {}
     global.conn.ev.removeAllListeners();
     global.conn = makeWASocket(connectionOptions, { chats: oldChats });
     global.store.bind(global.conn.ev);
@@ -474,13 +475,12 @@ async function connectionUpdate(update) {
   if (isNewLogin) global.conn.isInit = true;
   const code = lastDisconnect?.error?.output?.statusCode || lastDisconnect?.error?.output?.payload?.statusCode;
   
-  // **PROTEZIONE CONTRO CHIAMATE PRECOCI**
   if (code && code !== DisconnectReason.loggedOut && typeof global.reloadHandler === 'function') {
     await global.reloadHandler(true).catch(console.error);
     global.timestamp.connect = new Date;
   }
   
-  if (global.db.data == null) loadDatabase();
+  if (global.db.data == null) await global.loadDatabase();
 
   if (qr && (opzione === '1' || methodCodeQR) && !global.qrGenerated) {
     console.log(chalk.bold.yellow(`
@@ -512,9 +512,6 @@ async function connectionUpdate(update) {
       console.log(chalk.bold.green('✅ Bot entrato nel gruppo supporto con successo - non abbandonare!'));
     } catch (error) {
       console.error(chalk.bold.red('❌ Errore nell\'accettare l\'invito del gruppo:'), error.message);
-      if (error.data === 401) {
-        console.error(chalk.bold.yellow('⚠️ Errore di autorizzazione: controlla le credenziali o la sessione'));
-      }
     }
   }
 
@@ -553,9 +550,6 @@ async function connectionUpdate(update) {
       if (typeof global.reloadHandler === 'function') {
         await global.reloadHandler(true).catch(console.error);
       }
-    } else if (reason !== DisconnectReason.restartRequired && reason !== DisconnectReason.connectionClosed && !global.connectionMessagesPrinted.unknown) {
-      console.log(chalk.bold.redBright(`\n⚠️❗ MOTIVO DISCONNESSIONE SCONOSCIUTO: ${reason || 'Non trovato'} >> ${connection || 'Non trovato'}`));
-      global.connectionMessagesPrinted.unknown = true;
     }
   }
 }
@@ -571,7 +565,6 @@ async function connectSubBots() {
       console.log(chalk.bold.green('✅ Directory chatunity-sub creata con successo.'));
     } catch (err) {
       console.log(chalk.bold.red('❌ Errore nella creazione della directory chatunity-sub:', err.message));
-      return;
     }
     return;
   }
@@ -623,6 +616,7 @@ async function connectSubBots() {
   }
 }
 
+// **AVVIO BOT**
 (async () => {
   global.conns = [];
   try {
@@ -633,8 +627,9 @@ async function connectSubBots() {
 ╭﹕₊˚ ★ ⁺˳ꕤ₊⁺・꒱
   ⋆  ︵︵ ★ ChatUnity connesso ★ ︵︵ ⋆
 ╰. ꒷꒦ ꒷꒦‧˚₊˚꒷꒦꒷‧˚₊˚꒷꒦꒷`));
+    
     await connectSubBots();
-    await global.reloadHandler(); // Inizializzazione handler
+    await global.reloadHandler();
   } catch (error) {
     console.error(chalk.bold.bgRedBright(`🥀 Errore nell'avvio del bot: `, error));
   }
@@ -669,14 +664,17 @@ global.reload = async (_ev, filename) => {
         return delete global.plugins[filename];
       }
     } else global.conn?.logger?.info(`🆕 NUOVO PLUGIN RILEVATO: '${filename}'`);
+    
     const err = syntaxerror(fs.readFileSync(dir), filename, {
       sourceType: 'module',
       allowAwaitOutsideFunction: true,
     });
-    if (err) global.conn?.logger?.error(`❌ ERRORE DI SINTASSI IN: '${filename}'\n${format(err)}`);
-    else {
+    
+    if (err) {
+      global.conn?.logger?.error(`❌ ERRORE DI SINTASSI IN: '${filename}'\n${format(err)}`);
+    } else {
       try {
-        const module = (await import(`${global.__filename(dir)}?update=${Date.now()}`));
+        const module = await import(`${global.__filename(dir)}?update=${Date.now()}`);
         global.plugins[filename] = module.default || module;
       } catch (e) {
         global.conn?.logger?.error(`⚠️ ERRORE NEL PLUGIN: '${filename}\n${format(e)}'`);
@@ -712,6 +710,7 @@ async function _quickTest() {
       })
     ]);
   }));
+  
   const [ffmpeg, ffprobe, ffmpegWebp, convert, magick, gm, find] = test;
   const s = global.support = { ffmpeg, ffprobe, ffmpegWebp, convert, magick, gm, find };
   Object.freeze(global.support);
@@ -751,11 +750,10 @@ function ripristinaTimer(conn) {
   }, 1000 * 60 * 30);
 }
 
-_quickTest().then(() => global.conn?.logger?.info(chalk.bold.bgBlueBright(``)));
+_quickTest().then(() => global.conn?.logger?.info(chalk.bold.bgBlueBright('')));
 let filePath = fileURLToPath(import.meta.url);
 const mainWatcher = watch(filePath, async () => {
   console.log(chalk.bold.bgBlueBright("Main Aggiornato"));
   await global.reloadHandler(true).catch(console.error);
 });
 mainWatcher.setMaxListeners(20);
-
