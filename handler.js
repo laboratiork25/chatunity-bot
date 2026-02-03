@@ -534,4 +534,4 @@ watchFile(file, async () => {
   console.log(chalk.magenta("handler.js aggiornato"))
   import(pathToFileURL(file).href + `?update=${Date.now()}`).catch(console.error)
 })
-
+ 
